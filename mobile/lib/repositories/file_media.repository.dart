@@ -18,6 +18,7 @@ class FileMediaRepository {
 
   Future<LocalAsset?> saveLocalAsset(Uint8List data, {required String title, String? relativePath}) async {
     final entity = await PhotoManager.editor.saveImage(data, filename: title, title: title, relativePath: relativePath);
+    if (entity == null) return null;
 
     return LocalAsset(
       id: entity.id,

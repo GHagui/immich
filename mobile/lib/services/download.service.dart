@@ -50,10 +50,11 @@ class DownloadService {
   }
 
   Future<bool> saveImageWithPath(Task task) async {
-    final filePath = await task.filePath();
-    final title = task.filename;
-    final relativePath = Platform.isAndroid ? 'DCIM/Immich' : null;
+    String? filePath;
     try {
+      filePath = await task.filePath();
+      final title = task.filename;
+      final relativePath = Platform.isAndroid ? 'DCIM/Immich' : null;
       final Asset? resultAsset = await _fileMediaRepository.saveImageWithFile(
         filePath,
         title: title,
@@ -64,26 +65,27 @@ class DownloadService {
       _log.severe("Error saving image", error, stack);
       return false;
     } finally {
-      if (await File(filePath).exists()) {
+      if (filePath != null && await File(filePath).exists()) {
         await File(filePath).delete();
       }
     }
   }
 
   Future<bool> saveVideo(Task task) async {
-    final filePath = await task.filePath();
-    final title = task.filename;
-    final relativePath = Platform.isAndroid ? 'DCIM/Immich' : null;
-    final file = File(filePath);
+    String? filePath;
     try {
+      filePath = await task.filePath();
+      final title = task.filename;
+      final relativePath = Platform.isAndroid ? 'DCIM/Immich' : null;
+      final file = File(filePath);
       final Asset? resultAsset = await _fileMediaRepository.saveVideo(file, title: title, relativePath: relativePath);
       return resultAsset != null;
     } catch (error, stack) {
       _log.severe("Error saving video", error, stack);
       return false;
     } finally {
-      if (await file.exists()) {
-        await file.delete();
+      if (filePath != null && await File(filePath).exists()) {
+        await File(filePath).delete();
       }
     }
   }
@@ -110,8 +112,13 @@ class DownloadService {
     } on PlatformException catch (error, stack) {
       // Handle saving MotionPhotos on iOS
       if (error.code == 'PHPhotosErrorDomain (-1)') {
-        final result = await _fileMediaRepository.saveImageWithFile(imageFilePath, title: task.filename);
-        return result != null;
+        try {
+          final result = await _fileMediaRepository.saveImageWithFile(imageFilePath, title: task.filename);
+          return result != null;
+        } catch (fallbackError, fallbackStack) {
+          _log.severe("Error saving image as fallback for live photo", fallbackError, fallbackStack);
+          return false;
+        }
       }
       _log.severe("Error saving live photo", error, stack);
       return false;
