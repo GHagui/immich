@@ -30,6 +30,13 @@ class FileMediaRepository {
   }
 
   Future<Asset?> saveImageWithFile(String filePath, {String? title, String? relativePath}) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      return null;
+    }
+    if (await file.length() == 0) {
+      return null;
+    }
     final entity = await PhotoManager.editor.saveImageWithPath(filePath, title: title, relativePath: relativePath);
     return AssetMediaRepository.toAsset(entity);
   }
