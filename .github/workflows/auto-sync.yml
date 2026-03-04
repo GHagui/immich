@@ -1,0 +1,58 @@
+name: Auto-Sync Fork with Upstream
+
+on:
+  schedule:
+    # Runs every day at 02:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Merge upstream/main into main
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          # Full history is required for a clean merge
+          fetch-depth: 0
+          # Do not persist the token in .git/config — we set the remote URL
+          # explicitly only for the push step to avoid credential leakage
+          # through uploaded artifacts.
+          persist-credentials: false
+
+      - name: Configure git bot identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/immich-app/immich.git
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream main --no-tags
+
+      - name: Merge upstream/main
+        # --no-edit accepts the auto-generated merge commit message.
+        # If a conflict occurs, `git merge` exits with a non-zero code and
+        # leaves the working tree dirty. We detect that, abort cleanly, and
+        # fail the step so the conflict can be resolved manually.
+        run: |
+          if ! git merge upstream/main --no-edit; then
+            echo "::error::Merge conflict detected. Aborting merge — resolve manually."
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Push merged main to fork
+        # Inject the token only at push time so it is never written to disk.
+        run: |
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push origin main
