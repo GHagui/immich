@@ -72,20 +72,13 @@ class FileMediaRepository {
   /// Saves a RAW file on Android via [_rawFileSaverChannel], which inserts the
   /// file into MediaStore with an explicit MIME type to avoid the
   /// "Unsupported MIME type image/*" error from photo_manager.
-  Future<Asset?> _saveRawFileOnAndroid(
-    String filePath, {
-    required String title,
-    required String relativePath,
-  }) async {
-    final String? uriString = await _rawFileSaverChannel.invokeMethod<String>(
-      'saveRawFile',
-      {
-        'filePath': filePath,
-        'title': title,
-        'relativePath': relativePath,
-        'mimeType': mimeTypeForFile(filePath),
-      },
-    );
+  Future<Asset?> _saveRawFileOnAndroid(String filePath, {required String title, required String relativePath}) async {
+    final String? uriString = await _rawFileSaverChannel.invokeMethod<String>('saveRawFile', {
+      'filePath': filePath,
+      'title': title,
+      'relativePath': relativePath,
+      'mimeType': mimeTypeForFile(filePath),
+    });
 
     if (uriString == null) return null;
 

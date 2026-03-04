@@ -44,6 +44,16 @@ jobs:
         working-directory: ./mobile
         run: flutter pub get
 
+      - name: Generate localisation files
+        # easy_localization requires two generated files before the build:
+        #   lib/generated/codegen_loader.g.dart  (asset loader)
+        #   lib/generated/translations.g.dart    (typed translation keys)
+        # Without this step the compiler cannot resolve imports and the build fails.
+        working-directory: ./mobile
+        run: |
+          dart run easy_localization:generate -S ../i18n
+          dart run bin/generate_keys.dart
+
       - name: Build Debug APK
         working-directory: ./mobile
         run: flutter build apk --debug
