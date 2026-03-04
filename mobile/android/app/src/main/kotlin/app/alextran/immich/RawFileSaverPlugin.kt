@@ -12,8 +12,13 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Flutter plugin that saves a RAW file (e.g. Canon CR3) to Android MediaStore
@@ -58,15 +63,21 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             return
         }
 
-        try {
-            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveToDownloads(filePath, title, relativePath, mimeType)
-            } else {
-                saveToFilesLegacy(filePath, title, mimeType)
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    saveToDownloads(filePath, title, relativePath, mimeType)
+                } else {
+                    saveToFilesLegacy(filePath, title, mimeType)
+                }
+                withContext(Dispatchers.Main) {
+                    result.success(uri?.toString())
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    result.error("SAVE_ERROR", e.message, null)
+                }
             }
-            result.success(uri?.toString())
-        } catch (e: Exception) {
-            result.error("SAVE_ERROR", e.message, null)
         }
     }
 
@@ -75,7 +86,8 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
      *
      * The Downloads collection does not validate MIME types against the OS image
      * registry, so non-standard types such as "image/x-canon-cr3" are accepted.
-     * IS_PENDING is used to make the write atomic.
+     * IS_PENDING is used to make the write atomic; the pending record is deleted
+     * on any I/O failure so no 0-byte orphan is left in the database.
      */
     private fun saveToDownloads(
         filePath: String,
@@ -85,8 +97,11 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     ): Uri? {
         val resolver = context.contentResolver
 
-        // Remap DCIM-style paths to the Download directory tree.
-        val downloadRelativePath = relativePath.replaceFirst(Regex("^DCIM"), "Download")
+        // Remap DCIM-style paths to the Download directory tree and normalise
+        // the trailing separator that MediaStore expects.
+        val downloadRelativePath = relativePath
+            .replaceFirst(Regex("^DCIM(?=[/\\\\]|$)"), "Download")
+            .trimEnd('/', '\\') + "/"
 
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, title)
@@ -99,9 +114,10 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val uri = resolver.insert(collection, values) ?: return null
 
         try {
-            resolver.openOutputStream(uri)?.use { out ->
-                FileInputStream(File(filePath)).use { it.copyTo(out) }
-            }
+            val out = resolver.openOutputStream(uri)
+                ?: throw IOException("openOutputStream returned null for $uri")
+            out.use { FileInputStream(File(filePath)).use { src -> src.copyTo(out) } }
+
             val update = ContentValues().apply {
                 put(MediaStore.Downloads.IS_PENDING, 0)
             }
@@ -130,15 +146,18 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         @Suppress("DEPRECATION")
         val dcimDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
         val destDir = File(dcimDir, "Immich")
-        destDir.mkdirs()
-        val destFile = File(destDir, title)
 
+        if (!destDir.exists() && !destDir.mkdirs()) {
+            throw IOException("Failed to create directory: ${destDir.absolutePath}")
+        }
+
+        val destFile = File(destDir, title)
         FileInputStream(File(filePath)).use { input ->
             destFile.outputStream().use { output -> input.copyTo(output) }
         }
 
         // Use application/octet-stream so the scanner does not reject the file;
-        // fall back to the provided mimeType if it is a well-known image type.
+        // keep the provided mimeType only for well-known standard image types.
         val scanMimeType = if (mimeType.startsWith("image/x-") || mimeType == "image/*") {
             "application/octet-stream"
         } else {
@@ -155,7 +174,12 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             resultUri = uri
             latch.countDown()
         }
-        latch.await(5, TimeUnit.SECONDS)
+
+        val completed = latch.await(5, TimeUnit.SECONDS)
+        if (!completed) {
+            throw IOException("MediaScanner timed out for ${destFile.absolutePath}")
+        }
+
         return resultUri
     }
 

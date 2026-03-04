@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/entities/asset.entity.dart' hide AssetType;
+import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/repositories/asset_media.repository.dart';
 import 'package:photo_manager/photo_manager.dart' hide AssetType;
 import 'package:path/path.dart' as path;
@@ -22,11 +23,12 @@ class FileMediaRepository {
     return path.extension(filePath).toLowerCase() == '.cr3';
   }
 
-  /// Returns the MIME type to use when saving [filePath] to Android MediaStore.
+  /// Returns the MIME type to pass to the native save channel for [filePath].
   ///
-  /// Android's [MimeTypeMap] has no entry for `.cr3`, so [photo_manager] would
-  /// fall back to the wildcard `image/*`, which MediaStore rejects. This method
-  /// maps known unsupported extensions to their correct specific MIME types.
+  /// `.cr3` files are mapped to `image/x-canon-cr3` so the native plugin can
+  /// insert them into MediaStore.Downloads with a concrete type. All other
+  /// extensions return `image/*`, which photo_manager resolves correctly via
+  /// its own MimeTypeMap lookup for standard formats.
   @visibleForTesting
   String mimeTypeForFile(String filePath) {
     if (isCR3File(filePath)) return 'image/x-canon-cr3';
@@ -55,7 +57,7 @@ class FileMediaRepository {
     // CR3 files have no entry in Android's MimeTypeMap, so photo_manager falls back
     // to the wildcard "image/*" which MediaStore rejects. Use a dedicated native
     // channel that inserts the file with an explicit MIME type instead.
-    if (Platform.isAndroid && isCR3File(filePath)) {
+    if (CurrentPlatform.isAndroid && isCR3File(filePath)) {
       return _saveRawFileOnAndroid(
         filePath,
         title: title ?? path.basename(filePath),
