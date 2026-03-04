@@ -1,0 +1,86 @@
+name: Build & Release Custom APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Prevent concurrent releases from the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Debug & Release APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Java 17 (Zulu)
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: Set up Flutter (stable, version from pubspec)
+        uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
+        with:
+          channel: stable
+          flutter-version-file: ./mobile/pubspec.yaml
+
+      - name: Install dependencies
+        working-directory: ./mobile
+        run: flutter pub get
+
+      - name: Build Debug APK
+        working-directory: ./mobile
+        run: flutter build apk --debug
+
+      - name: Build Release APK
+        working-directory: ./mobile
+        run: flutter build apk --release
+
+      # ── Tag & Release ────────────────────────────────────────────────────────
+
+      - name: Generate release tag and title
+        id: meta
+        run: |
+          DATE=$(date -u +'%Y%m%d')
+          SHORT_SHA=${GITHUB_SHA::7}
+          TAG="v-custom-${DATE}-${SHORT_SHA}"
+          TITLE="Immich Custom Build - ${DATE}"
+          echo "tag=${TAG}"     >> "$GITHUB_OUTPUT"
+          echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload APKs
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.title }}
+          body: |
+            **Automated custom build** from commit `${{ github.sha }}`.
+
+            ### What's included
+            - All upstream Immich changes merged into `main`
+            - Custom fix: CR3 RAW file download on Android
+              (routes saves through `MediaStore.Downloads` to bypass OS MIME-type validation)
+
+            ### Assets
+            | File | Description |
+            |---|---|
+            | `app-debug.apk` | Debug build — includes debug symbols, suitable for testing |
+            | `app-release.apk` | Release build — optimised, debug-signed |
+
+            > **Note:** Both APKs are signed with the default debug keystore.
+            > To install on a device, enable *Install from unknown sources*.
+          files: |
+            mobile/build/app/outputs/flutter-apk/app-debug.apk
+            mobile/build/app/outputs/flutter-apk/app-release.apk
+          fail_on_unmatched_files: true
