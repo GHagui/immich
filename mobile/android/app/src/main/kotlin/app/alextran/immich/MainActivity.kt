@@ -52,6 +52,7 @@ class MainActivity : FlutterFragmentActivity() {
       flutterEngine.plugins.add(BackgroundServicePlugin())
       flutterEngine.plugins.add(backgroundEngineLockImpl)
       flutterEngine.plugins.add(nativeSyncApiImpl)
+      flutterEngine.plugins.add(RawFileSaverPlugin())
     }
 
     fun cancelPlugins(flutterEngine: FlutterEngine) {
