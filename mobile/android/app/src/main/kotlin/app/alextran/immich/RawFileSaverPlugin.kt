@@ -1,5 +1,6 @@
 package app.alextran.immich
 
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.media.MediaScannerConnection
@@ -88,6 +89,11 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
      * registry, so non-standard types such as "image/x-canon-cr3" are accepted.
      * IS_PENDING is used to make the write atomic; the pending record is deleted
      * on any I/O failure so no 0-byte orphan is left in the database.
+     *
+     * Duplicate filenames are resolved before insertion by appending a counter
+     * before the extension (e.g. "IMG_5595 (1).CR3"), preventing Android from
+     * appending the counter after the extension ("IMG_5595.CR3 (1)") which would
+     * break the file type association.
      */
     private fun saveToDownloads(
         filePath: String,
@@ -103,14 +109,16 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             .replaceFirst(Regex("^DCIM(?=[/\\\\]|$)"), "Download")
             .trimEnd('/', '\\') + "/"
 
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val uniqueTitle = resolveUniqueDownloadsName(resolver, collection, downloadRelativePath, title)
+
         val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, title)
+            put(MediaStore.Downloads.DISPLAY_NAME, uniqueTitle)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
             put(MediaStore.Downloads.RELATIVE_PATH, downloadRelativePath)
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
 
-        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
         val uri = resolver.insert(collection, values) ?: return null
 
         try {
@@ -131,12 +139,52 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     /**
+     * Returns a display name that does not already exist in [collection] under
+     * [relativePath]. If [displayName] is taken, a counter is inserted before
+     * the file extension: "IMG_5595.CR3" -> "IMG_5595 (1).CR3".
+     *
+     * This prevents Android from appending the counter after the extension
+     * ("IMG_5595.CR3 (1)"), which would break the file type association.
+     */
+    private fun resolveUniqueDownloadsName(
+        resolver: ContentResolver,
+        collection: Uri,
+        relativePath: String,
+        displayName: String,
+    ): String {
+        val dotIndex = displayName.lastIndexOf('.')
+        val baseName = if (dotIndex >= 0) displayName.substring(0, dotIndex) else displayName
+        val extension = if (dotIndex >= 0) displayName.substring(dotIndex) else ""
+
+        var candidate = displayName
+        var counter = 1
+
+        while (true) {
+            val cursor = resolver.query(
+                collection,
+                arrayOf(MediaStore.Downloads._ID),
+                "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?",
+                arrayOf(candidate, relativePath),
+                null,
+            )
+            val exists = (cursor?.count ?: 0) > 0
+            cursor?.close()
+            if (!exists) return candidate
+            candidate = "$baseName ($counter)$extension"
+            counter++
+        }
+    }
+
+    /**
      * Pre-Q fallback: write the file directly to DCIM/Immich on the filesystem
      * and register it with MediaScannerConnection so it appears in the gallery.
      *
      * MediaStore.Images rejects non-standard MIME types on older Android versions,
      * so we use application/octet-stream for the scanner hint and let the OS
      * determine the actual type from the file content.
+     *
+     * Duplicate filenames are resolved by inserting a counter before the extension
+     * (e.g. "IMG_5595 (1).CR3") so the extension is always preserved.
      */
     private fun saveToFilesLegacy(
         filePath: String,
@@ -151,7 +199,7 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             throw IOException("Failed to create directory: ${destDir.absolutePath}")
         }
 
-        val destFile = File(destDir, title)
+        val destFile = resolveUniqueFile(destDir, title)
         FileInputStream(File(filePath)).use { input ->
             destFile.outputStream().use { output -> input.copyTo(output) }
         }
@@ -181,6 +229,25 @@ class RawFileSaverPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
 
         return resultUri
+    }
+
+    /**
+     * Returns a [File] inside [dir] whose name does not already exist on disk.
+     * If [name] is taken, a counter is inserted before the extension:
+     * "IMG_5595.CR3" -> "IMG_5595 (1).CR3".
+     */
+    private fun resolveUniqueFile(dir: File, name: String): File {
+        val dotIndex = name.lastIndexOf('.')
+        val baseName = if (dotIndex >= 0) name.substring(0, dotIndex) else name
+        val extension = if (dotIndex >= 0) name.substring(dotIndex) else ""
+
+        var candidate = File(dir, name)
+        var counter = 1
+        while (candidate.exists()) {
+            candidate = File(dir, "$baseName ($counter)$extension")
+            counter++
+        }
+        return candidate
     }
 
     companion object {

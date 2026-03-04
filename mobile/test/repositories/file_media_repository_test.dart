@@ -48,6 +48,22 @@ void main() {
     test('returns false for file with no extension', () {
       expect(repository.isCR3File('/path/to/image'), isFalse);
     });
+
+    // Duplicate-download naming: the native plugin inserts the counter BEFORE
+    // the extension ("IMG_5595 (1).CR3") so the extension is always preserved.
+    test('returns true for counter-before-extension duplicate name', () {
+      expect(repository.isCR3File('/path/to/IMG_5595 (1).CR3'), isTrue);
+    });
+
+    test('returns true for second duplicate counter-before-extension', () {
+      expect(repository.isCR3File('/path/to/IMG_5595 (2).CR3'), isTrue);
+    });
+
+    // Regression guard: the old broken naming (counter after extension) must
+    // NOT be recognised as a CR3 file, confirming the fix is necessary.
+    test('returns false for broken counter-after-extension name (IMG_5595.CR3 (1))', () {
+      expect(repository.isCR3File('/path/to/IMG_5595.CR3 (1)'), isFalse);
+    });
   });
 
   group('FileMediaRepository.mimeTypeForFile', () {
@@ -99,6 +115,24 @@ void main() {
       // semantically correct MIME type to the plugin.
       final mimeType = repository.mimeTypeForFile('/sdcard/DCIM/IMG_5500.CR3');
       expect(mimeType, equals('image/x-canon-cr3'));
+    });
+
+    test('returns image/x-canon-cr3 for counter-before-extension duplicate name', () {
+      // The native plugin names duplicates "IMG_5595 (1).CR3"; the Dart layer
+      // must still resolve the correct MIME type for such filenames.
+      expect(
+        repository.mimeTypeForFile('/path/to/IMG_5595 (1).CR3'),
+        equals('image/x-canon-cr3'),
+      );
+    });
+
+    test('returns image/* for broken counter-after-extension name (regression guard)', () {
+      // "IMG_5595.CR3 (1)" has no recognised extension - confirms the old
+      // broken naming would have caused a second failure at the MIME level too.
+      expect(
+        repository.mimeTypeForFile('/path/to/IMG_5595.CR3 (1)'),
+        equals('image/*'),
+      );
     });
   });
 }
