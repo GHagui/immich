@@ -21,6 +21,10 @@ jobs:
           ref: main
           # Full history is required for a clean merge
           fetch-depth: 0
+          # Do not persist the token in .git/config — we set the remote URL
+          # explicitly only for the push step to avoid credential leakage
+          # through uploaded artifacts.
+          persist-credentials: false
 
       - name: Configure git bot identity
         run: |
@@ -48,5 +52,7 @@ jobs:
           fi
 
       - name: Push merged main to fork
+        # Inject the token only at push time so it is never written to disk.
         run: |
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git push origin main
